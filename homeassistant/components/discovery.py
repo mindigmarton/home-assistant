@@ -21,7 +21,7 @@ from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.helpers.discovery import async_load_platform, async_discover
 import homeassistant.util.dt as dt_util
 
-REQUIREMENTS = ['netdisco==1.0.1']
+REQUIREMENTS = ['netdisco==1.2.3']
 
 DOMAIN = 'discovery'
 
@@ -33,6 +33,10 @@ SERVICE_IKEA_TRADFRI = 'ikea_tradfri'
 SERVICE_HASSIO = 'hassio'
 SERVICE_AXIS = 'axis'
 SERVICE_APPLE_TV = 'apple_tv'
+SERVICE_WINK = 'wink'
+SERVICE_XIAOMI_GW = 'xiaomi_gw'
+SERVICE_TELLDUSLIVE = 'tellstick'
+SERVICE_HUE = 'philips_hue'
 
 SERVICE_HANDLERS = {
     SERVICE_HASS_IOS_APP: ('ios', None),
@@ -42,7 +46,10 @@ SERVICE_HANDLERS = {
     SERVICE_HASSIO: ('hassio', None),
     SERVICE_AXIS: ('axis', None),
     SERVICE_APPLE_TV: ('apple_tv', None),
-    'philips_hue': ('light', 'hue'),
+    SERVICE_WINK: ('wink', None),
+    SERVICE_XIAOMI_GW: ('xiaomi_aqara', None),
+    SERVICE_TELLDUSLIVE: ('tellduslive', None),
+    SERVICE_HUE: ('hue', None),
     'google_cast': ('media_player', 'cast'),
     'panasonic_viera': ('media_player', 'panasonic_viera'),
     'plex_mediaserver': ('media_player', 'plex'),
@@ -57,7 +64,9 @@ SERVICE_HANDLERS = {
     'frontier_silicon': ('media_player', 'frontier_silicon'),
     'openhome': ('media_player', 'openhome'),
     'harmony': ('remote', 'harmony'),
+    'sabnzbd': ('sensor', 'sabnzbd'),
     'bose_soundtouch': ('media_player', 'soundtouch'),
+    'bluesound': ('media_player', 'bluesound'),
 }
 
 CONF_IGNORE = 'ignore'
@@ -96,6 +105,7 @@ def async_setup(hass, config):
 
         # We do not know how to handle this service.
         if not comp_plat:
+            logger.info("Unknown service discovered: %s %s", service, info)
             return
 
         discovery_hash = json.dumps([service, info], sort_keys=True)

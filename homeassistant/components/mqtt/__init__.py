@@ -19,6 +19,7 @@ from homeassistant.core import callback
 from homeassistant.setup import async_prepare_setup_platform
 from homeassistant.config import load_yaml_config_file
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.loader import bind_hass
 from homeassistant.helpers import template, config_validation as cv
 from homeassistant.helpers.dispatcher import (
     async_dispatcher_connect, dispatcher_send)
@@ -29,7 +30,7 @@ from homeassistant.const import (
     CONF_PASSWORD, CONF_PORT, CONF_PROTOCOL, CONF_PAYLOAD)
 from homeassistant.components.mqtt.server import HBMQTT_CONFIG_SCHEMA
 
-REQUIREMENTS = ['paho-mqtt==1.3.0']
+REQUIREMENTS = ['paho-mqtt==1.3.1']
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ CONF_WILL_MESSAGE = 'will_message'
 
 CONF_STATE_TOPIC = 'state_topic'
 CONF_COMMAND_TOPIC = 'command_topic'
+CONF_AVAILABILITY_TOPIC = 'availability_topic'
 CONF_QOS = 'qos'
 CONF_RETAIN = 'retain'
 
@@ -180,12 +182,14 @@ def _build_publish_data(topic, qos, retain):
     return data
 
 
+@bind_hass
 def publish(hass, topic, payload, qos=None, retain=None):
     """Publish message to an MQTT topic."""
     hass.add_job(async_publish, hass, topic, payload, qos, retain)
 
 
 @callback
+@bind_hass
 def async_publish(hass, topic, payload, qos=None, retain=None):
     """Publish message to an MQTT topic."""
     data = _build_publish_data(topic, qos, retain)
@@ -193,6 +197,7 @@ def async_publish(hass, topic, payload, qos=None, retain=None):
     hass.async_add_job(hass.services.async_call(DOMAIN, SERVICE_PUBLISH, data))
 
 
+@bind_hass
 def publish_template(hass, topic, payload_template, qos=None, retain=None):
     """Publish message to an MQTT topic using a template payload."""
     data = _build_publish_data(topic, qos, retain)
@@ -201,6 +206,7 @@ def publish_template(hass, topic, payload_template, qos=None, retain=None):
 
 
 @asyncio.coroutine
+@bind_hass
 def async_subscribe(hass, topic, msg_callback, qos=DEFAULT_QOS,
                     encoding='utf-8'):
     """Subscribe to an MQTT topic."""
@@ -232,6 +238,7 @@ def async_subscribe(hass, topic, msg_callback, qos=DEFAULT_QOS,
     return async_remove
 
 
+@bind_hass
 def subscribe(hass, topic, msg_callback, qos=DEFAULT_QOS,
               encoding='utf-8'):
     """Subscribe to an MQTT topic."""
@@ -315,15 +322,14 @@ def async_setup(hass, config):
         client_cert = conf.get(CONF_CLIENT_CERT)
         tls_insecure = conf.get(CONF_TLS_INSECURE)
         protocol = conf[CONF_PROTOCOL]
-
-        # hbmqtt requires a client id to be set.
-        if client_id is None:
-            client_id = 'home-assistant'
     elif broker_config:
         # If no broker passed in, auto config to internal server
         broker, port, username, password, certificate, protocol = broker_config
         # Embedded broker doesn't have some ssl variables
         client_key, client_cert, tls_insecure = None, None, None
+        # hbmqtt requires a client id to be set.
+        if client_id is None:
+            client_id = 'home-assistant'
     else:
         err = "Unable to start MQTT broker."
         if conf.get(CONF_EMBEDDED) is not None:
@@ -432,7 +438,8 @@ class MQTT(object):
         self.broker = broker
         self.port = port
         self.keepalive = keepalive
-        self.topics = {}
+        self.wanted_topics = {}
+        self.subscribed_topics = {}
         self.progress = {}
         self.birth_message = birth_message
         self._mqttc = None
@@ -520,15 +527,14 @@ class MQTT(object):
             raise HomeAssistantError("topic need to be a string!")
 
         with (yield from self._paho_lock):
-            if topic in self.topics:
+            if topic in self.subscribed_topics:
                 return
-
+            self.wanted_topics[topic] = qos
             result, mid = yield from self.hass.async_add_job(
                 self._mqttc.subscribe, topic, qos)
 
             _raise_on_error(result)
             self.progress[mid] = topic
-            self.topics[topic] = None
 
     @asyncio.coroutine
     def async_unsubscribe(self, topic):
@@ -536,6 +542,7 @@ class MQTT(object):
 
         This method is a coroutine.
         """
+        self.wanted_topics.pop(topic, None)
         result, mid = yield from self.hass.async_add_job(
             self._mqttc.unsubscribe, topic)
 
@@ -556,15 +563,10 @@ class MQTT(object):
             self._mqttc.disconnect()
             return
 
-        old_topics = self.topics
-
-        self.topics = {key: value for key, value in self.topics.items()
-                       if value is None}
-
-        for topic, qos in old_topics.items():
-            # qos is None if we were in process of subscribing
-            if qos is not None:
-                self.hass.add_job(self.async_subscribe, topic, qos)
+        self.progress = {}
+        self.subscribed_topics = {}
+        for topic, qos in self.wanted_topics.items():
+            self.hass.add_job(self.async_subscribe, topic, qos)
 
         if self.birth_message:
             self.hass.add_job(self.async_publish(
@@ -578,7 +580,7 @@ class MQTT(object):
         topic = self.progress.pop(mid, None)
         if topic is None:
             return
-        self.topics[topic] = granted_qos[0]
+        self.subscribed_topics[topic] = granted_qos[0]
 
     def _mqtt_on_message(self, _mqttc, _userdata, msg):
         """Message received callback."""
@@ -592,18 +594,12 @@ class MQTT(object):
         topic = self.progress.pop(mid, None)
         if topic is None:
             return
-        self.topics.pop(topic, None)
+        self.subscribed_topics.pop(topic, None)
 
     def _mqtt_on_disconnect(self, _mqttc, _userdata, result_code):
         """Disconnected callback."""
         self.progress = {}
-        self.topics = {key: value for key, value in self.topics.items()
-                       if value is not None}
-
-        # Remove None values from topic list
-        for key in list(self.topics):
-            if self.topics[key] is None:
-                self.topics.pop(key)
+        self.subscribed_topics = {}
 
         # When disconnected because of calling disconnect()
         if result_code == 0:

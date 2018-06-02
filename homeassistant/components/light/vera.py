@@ -21,7 +21,8 @@ DEPENDENCIES = ['vera']
 def setup_platform(hass, config, add_devices, discovery_info=None):
     """Set up the Vera lights."""
     add_devices(
-        VeraLight(device, VERA_CONTROLLER) for device in VERA_DEVICES['light'])
+        VeraLight(device, hass.data[VERA_CONTROLLER]) for
+        device in hass.data[VERA_DEVICES]['light'])
 
 
 class VeraLight(VeraDevice, Light):
@@ -50,8 +51,7 @@ class VeraLight(VeraDevice, Light):
         """Flag supported features."""
         if self._color:
             return SUPPORT_BRIGHTNESS | SUPPORT_RGB_COLOR
-        else:
-            return SUPPORT_BRIGHTNESS
+        return SUPPORT_BRIGHTNESS
 
     def turn_on(self, **kwargs):
         """Turn the light on."""
