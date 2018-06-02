@@ -63,7 +63,7 @@ COVER_SCHEMA = vol.Schema({
     vol.Optional(CONF_TILT_OPTIMISTIC): cv.boolean,
     vol.Optional(POSITION_ACTION): cv.SCRIPT_SCHEMA,
     vol.Optional(TILT_ACTION): cv.SCRIPT_SCHEMA,
-    vol.Optional(CONF_FRIENDLY_NAME, default=None): cv.string,
+    vol.Optional(CONF_FRIENDLY_NAME): cv.string,
     vol.Optional(CONF_ENTITY_ID): cv.entity_ids
 })
 
@@ -234,7 +234,9 @@ class CoverTemplate(CoverDevice):
 
         None is unknown, 0 is closed, 100 is fully open.
         """
-        return self._position
+        if self._position_template or self._position_script:
+            return self._position
+        return None
 
     @property
     def current_cover_tilt_position(self):

@@ -4,7 +4,7 @@ change_association:
   description: Change an association in the Z-Wave network.
   fields:
     association:
-      description: Specify add or remove assosication
+      description: Specify add or remove association
       example: add
     node_id:
       description: Node id of the node to set association for.
@@ -30,14 +30,14 @@ heal_network:
   description: Start a Z-Wave network heal. This might take a while and will slow down the Z-Wave network greatly while it is being processed. Refer to OZW.log for progress.
   fields:
     return_routes:
-    description: Wheter or not to update the return routes from the nodes to the controller. Defaults to False.
+    description: Whether or not to update the return routes from the nodes to the controller. Defaults to False.
     example: True
 
 heal_node:
   description: Start a Z-Wave node heal. Refer to OZW.log for progress.
   fields:
     return_routes:
-    description: Wheter or not to update the return routes from the node to the controller. Defaults to False.
+    description: Whether or not to update the return routes from the node to the controller. Defaults to False.
     example: True
 
 remove_node:
@@ -118,6 +118,9 @@ set_wakeup:
       description: Node id of the device to set the wake-up interval for. (integer)
     value:
       description: Value of the interval to set. (integer)
+
+update_config:
+  description: Attempt to update ozw configuration files from git to support newer devices.
 
 start_network:
   description: Start the Z-Wave network. This might take a while, depending on how big your Z-Wave network is.

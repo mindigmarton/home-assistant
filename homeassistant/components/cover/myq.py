@@ -70,6 +70,11 @@ class MyQDevice(CoverDevice):
         self._status = STATE_CLOSED
 
     @property
+    def device_class(self):
+        """Define this cover as a garage door."""
+        return 'garage'
+
+    @property
     def should_poll(self):
         """Poll for state."""
         return True
@@ -84,11 +89,11 @@ class MyQDevice(CoverDevice):
         """Return true if cover is closed, else False."""
         return self._status == STATE_CLOSED
 
-    def close_cover(self):
+    def close_cover(self, **kwargs):
         """Issue close command to cover."""
         self.myq.close_device(self.device_id)
 
-    def open_cover(self):
+    def open_cover(self, **kwargs):
         """Issue open command to cover."""
         self.myq.open_device(self.device_id)
 

@@ -5,15 +5,16 @@ For more details about this platform, please refer to the documentation at
 https://home-assistant.io/components/alarm_control_panel.simplisafe/
 """
 import logging
+import re
 
 import voluptuous as vol
 
 import homeassistant.components.alarm_control_panel as alarm
 from homeassistant.components.alarm_control_panel import PLATFORM_SCHEMA
 from homeassistant.const import (
-    CONF_PASSWORD, CONF_USERNAME, STATE_UNKNOWN, CONF_CODE, CONF_NAME,
-    STATE_ALARM_DISARMED, STATE_ALARM_ARMED_HOME, STATE_ALARM_ARMED_AWAY,
-    EVENT_HOMEASSISTANT_STOP)
+    CONF_CODE, CONF_NAME, CONF_PASSWORD, CONF_USERNAME,
+    EVENT_HOMEASSISTANT_STOP, STATE_ALARM_ARMED_AWAY, STATE_ALARM_ARMED_HOME,
+    STATE_ALARM_DISARMED, STATE_UNKNOWN)
 import homeassistant.helpers.config_validation as cv
 
 REQUIREMENTS = ['simplisafe-python==1.0.5']
@@ -22,6 +23,7 @@ _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_NAME = 'SimpliSafe'
 DOMAIN = 'simplisafe'
+
 NOTIFICATION_ID = 'simplisafe_notification'
 NOTIFICATION_TITLE = 'SimpliSafe Setup'
 
@@ -65,7 +67,7 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
 
 
 class SimpliSafeAlarm(alarm.AlarmControlPanel):
-    """Representation a SimpliSafe alarm."""
+    """Representation of a SimpliSafe alarm."""
 
     def __init__(self, simplisafe, name, code):
         """Initialize the SimpliSafe alarm."""
@@ -82,8 +84,12 @@ class SimpliSafeAlarm(alarm.AlarmControlPanel):
 
     @property
     def code_format(self):
-        """One or more characters if code is defined."""
-        return None if self._code is None else '.+'
+        """Return one or more digits/characters."""
+        if self._code is None:
+            return None
+        elif isinstance(self._code, str) and re.search('^\\d+$', self._code):
+            return 'Number'
+        return 'Any'
 
     @property
     def state(self):
@@ -103,12 +109,12 @@ class SimpliSafeAlarm(alarm.AlarmControlPanel):
     def device_state_attributes(self):
         """Return the state attributes."""
         return {
-            'temperature': self.simplisafe.temperature(),
+            'alarm': self.simplisafe.alarm(),
             'co': self.simplisafe.carbon_monoxide(),
             'fire': self.simplisafe.fire(),
-            'alarm': self.simplisafe.alarm(),
+            'flood': self.simplisafe.flood(),
             'last_event': self.simplisafe.last_event(),
-            'flood': self.simplisafe.flood()
+            'temperature': self.simplisafe.temperature(),
         }
 
     def update(self):

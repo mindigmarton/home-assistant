@@ -71,7 +71,7 @@ class TestComponentsDeviceTrackerUnifiDirect(unittest.TestCase):
 
     @patch('pexpect.pxssh.pxssh')
     def test_get_device_name(self, mock_ssh):
-        """"Testing MAC matching."""
+        """Testing MAC matching."""
         conf_dict = {
             DOMAIN: {
                 CONF_PLATFORM: 'unifi_direct',
@@ -95,7 +95,7 @@ class TestComponentsDeviceTrackerUnifiDirect(unittest.TestCase):
     @patch('pexpect.pxssh.pxssh.logout')
     @patch('pexpect.pxssh.pxssh.login')
     def test_failed_to_log_in(self, mock_login, mock_logout):
-        """"Testing exception at login results in False."""
+        """Testing exception at login results in False."""
         from pexpect import exceptions
 
         conf_dict = {
@@ -120,7 +120,7 @@ class TestComponentsDeviceTrackerUnifiDirect(unittest.TestCase):
     @patch('pexpect.pxssh.pxssh.sendline')
     def test_to_get_update(self, mock_sendline, mock_prompt, mock_login,
                            mock_logout):
-        """"Testing exception in get_update matching."""
+        """Testing exception in get_update matching."""
         conf_dict = {
             DOMAIN: {
                 CONF_PLATFORM: 'unifi_direct',
@@ -139,12 +139,12 @@ class TestComponentsDeviceTrackerUnifiDirect(unittest.TestCase):
         devices = scanner._get_update()  # pylint: disable=protected-access
         self.assertTrue(devices is None)
 
-    def test_good_reponse_parses(self):
+    def test_good_response_parses(self):
         """Test that the response form the AP parses to JSON correctly."""
         response = _response_to_json(load_fixture('unifi_direct.txt'))
         self.assertTrue(response != {})
 
-    def test_bad_reponse_returns_none(self):
+    def test_bad_response_returns_none(self):
         """Test that a bad response form the AP parses to JSON correctly."""
         self.assertTrue(_response_to_json("{(}") == {})
 

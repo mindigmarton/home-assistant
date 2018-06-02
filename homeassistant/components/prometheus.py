@@ -13,14 +13,14 @@ from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.components import recorder
 from homeassistant.const import (
-    CONF_DOMAINS, CONF_ENTITIES, CONF_EXCLUDE, CONF_INCLUDE, TEMP_CELSIUS,
+    CONF_DOMAINS, CONF_ENTITIES, CONF_EXCLUDE, CONF_INCLUDE,
     EVENT_STATE_CHANGED, TEMP_FAHRENHEIT, CONTENT_TYPE_TEXT_PLAIN,
     ATTR_TEMPERATURE, ATTR_UNIT_OF_MEASUREMENT)
 from homeassistant import core as hacore
 from homeassistant.helpers import state as state_helper
 from homeassistant.util.temperature import fahrenheit_to_celsius
 
-REQUIREMENTS = ['prometheus_client==0.0.21']
+REQUIREMENTS = ['prometheus_client==0.1.0']
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -86,9 +86,16 @@ class Metrics(object):
         if hasattr(self, handler):
             getattr(self, handler)(state)
 
+        metric = self._metric(
+            'state_change',
+            self.prometheus_client.Counter,
+            'The number of state changes',
+        )
+        metric.labels(**self._labels(state)).inc()
+
     def _metric(self, metric, factory, documentation, labels=None):
         if labels is None:
-            labels = ['entity', 'friendly_name']
+            labels = ['entity', 'friendly_name', 'domain']
 
         try:
             return self._metrics[metric]
@@ -100,6 +107,7 @@ class Metrics(object):
     def _labels(state):
         return {
             'entity': state.entity_id,
+            'domain': state.domain,
             'friendly_name': state.attributes.get('friendly_name'),
         }
 
@@ -181,57 +189,29 @@ class Metrics(object):
             pass
 
     def _handle_sensor(self, state):
-        _sensor_types = {
-            TEMP_CELSIUS: (
-                'temperature_c', self.prometheus_client.Gauge,
-                'Temperature in degrees Celsius',
-            ),
-            TEMP_FAHRENHEIT: (
-                'temperature_c', self.prometheus_client.Gauge,
-                'Temperature in degrees Celsius',
-            ),
-            '%': (
-                'relative_humidity', self.prometheus_client.Gauge,
-                'Relative humidity (0..100)',
-            ),
-            'lux': (
-                'light_lux', self.prometheus_client.Gauge,
-                'Light level in lux',
-            ),
-            'kWh': (
-                'electricity_used_kwh', self.prometheus_client.Gauge,
-                'Electricity used by this device in KWh',
-            ),
-            'V': (
-                'voltage', self.prometheus_client.Gauge,
-                'Currently reported voltage in Volts',
-            ),
-            'W': (
-                'electricity_usage_w', self.prometheus_client.Gauge,
-                'Currently reported electricity draw in Watts',
-            ),
-            'min': (
-                'sensor_min', self.prometheus_client.Gauge,
-                'Time in minutes reported by a sensor'
-            ),
-            'Events': (
-                'sensor_event_count', self.prometheus_client.Gauge,
-                'Number of events for a sensor'
-            ),
-        }
 
         unit = state.attributes.get(ATTR_UNIT_OF_MEASUREMENT)
-        metric = _sensor_types.get(unit)
+        metric = state.entity_id.split(".")[1]
 
-        if metric is not None:
-            metric = self._metric(*metric)
-            try:
-                value = state_helper.state_as_number(state)
-                if unit == TEMP_FAHRENHEIT:
-                    value = fahrenheit_to_celsius(value)
-                metric.labels(**self._labels(state)).set(value)
-            except ValueError:
-                pass
+        if '_' not in str(metric):
+            metric = state.entity_id.replace('.', '_')
+
+        try:
+            int(metric.split("_")[-1])
+            metric = "_".join(metric.split("_")[:-1])
+        except ValueError:
+            pass
+
+        _metric = self._metric(metric, self.prometheus_client.Gauge,
+                               state.entity_id)
+
+        try:
+            value = state_helper.state_as_number(state)
+            if unit == TEMP_FAHRENHEIT:
+                value = fahrenheit_to_celsius(value)
+            _metric.labels(**self._labels(state)).set(value)
+        except ValueError:
+            pass
 
         self._battery(state)
 

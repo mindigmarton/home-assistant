@@ -5,12 +5,12 @@ For more details about this component, please refer to the documentation at
 https://home-assistant.io/components/media_player/
 """
 import asyncio
+import base64
 from datetime import timedelta
 import functools as ft
 import collections
 import hashlib
 import logging
-import os
 from random import SystemRandom
 
 from aiohttp import web
@@ -18,8 +18,8 @@ from aiohttp.hdrs import CONTENT_TYPE, CACHE_CONTROL
 import async_timeout
 import voluptuous as vol
 
+from homeassistant.core import callback
 from homeassistant.components.http import KEY_AUTHENTICATED, HomeAssistantView
-from homeassistant.config import load_yaml_config_file
 from homeassistant.const import (
     STATE_OFF, STATE_IDLE, STATE_PLAYING, STATE_UNKNOWN, ATTR_ENTITY_ID,
     SERVICE_TOGGLE, SERVICE_TURN_ON, SERVICE_TURN_OFF, SERVICE_VOLUME_UP,
@@ -33,7 +33,7 @@ from homeassistant.helpers.config_validation import PLATFORM_SCHEMA  # noqa
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_component import EntityComponent
 from homeassistant.loader import bind_hass
-from homeassistant.util.async import run_coroutine_threadsafe
+from homeassistant.components import websocket_api
 
 _LOGGER = logging.getLogger(__name__)
 _RND = SystemRandom()
@@ -86,10 +86,12 @@ ATTR_MEDIA_SHUFFLE = 'shuffle'
 
 MEDIA_TYPE_MUSIC = 'music'
 MEDIA_TYPE_TVSHOW = 'tvshow'
-MEDIA_TYPE_VIDEO = 'movie'
+MEDIA_TYPE_MOVIE = 'movie'
+MEDIA_TYPE_VIDEO = 'video'
 MEDIA_TYPE_EPISODE = 'episode'
 MEDIA_TYPE_CHANNEL = 'channel'
 MEDIA_TYPE_PLAYLIST = 'playlist'
+MEDIA_TYPE_URL = 'url'
 
 SUPPORT_PAUSE = 1
 SUPPORT_SEEK = 2
@@ -362,22 +364,27 @@ def set_shuffle(hass, shuffle, entity_id=None):
     hass.services.call(DOMAIN, SERVICE_SHUFFLE_SET, data)
 
 
-@asyncio.coroutine
-def async_setup(hass, config):
+WS_TYPE_MEDIA_PLAYER_THUMBNAIL = 'media_player_thumbnail'
+SCHEMA_WEBSOCKET_GET_THUMBNAIL = \
+    websocket_api.BASE_COMMAND_MESSAGE_SCHEMA.extend({
+        'type': WS_TYPE_MEDIA_PLAYER_THUMBNAIL,
+        'entity_id': cv.entity_id
+    })
+
+
+async def async_setup(hass, config):
     """Track states and offer events for media_players."""
-    component = EntityComponent(
+    component = hass.data[DOMAIN] = EntityComponent(
         logging.getLogger(__name__), DOMAIN, hass, SCAN_INTERVAL)
 
-    hass.http.register_view(MediaPlayerImageView(component.entities))
+    hass.components.websocket_api.async_register_command(
+        WS_TYPE_MEDIA_PLAYER_THUMBNAIL, websocket_handle_thumbnail,
+        SCHEMA_WEBSOCKET_GET_THUMBNAIL)
+    hass.http.register_view(MediaPlayerImageView(component))
 
-    yield from component.async_setup(config)
+    await component.async_setup(config)
 
-    descriptions = yield from hass.async_add_job(
-        load_yaml_config_file, os.path.join(
-            os.path.dirname(__file__), 'services.yaml'))
-
-    @asyncio.coroutine
-    def async_service_handler(service):
+    async def async_service_handler(service):
         """Map services to methods on MediaPlayerDevice."""
         method = SERVICE_TO_METHOD.get(service.service)
         if not method:
@@ -405,20 +412,20 @@ def async_setup(hass, config):
 
         update_tasks = []
         for player in target_players:
-            yield from getattr(player, method['method'])(**params)
+            await getattr(player, method['method'])(**params)
             if not player.should_poll:
                 continue
             update_tasks.append(player.async_update_ha_state(True))
 
         if update_tasks:
-            yield from asyncio.wait(update_tasks, loop=hass.loop)
+            await asyncio.wait(update_tasks, loop=hass.loop)
 
     for service in SERVICE_TO_METHOD:
         schema = SERVICE_TO_METHOD[service].get(
             'schema', MEDIA_PLAYER_SCHEMA)
         hass.services.async_register(
             DOMAIN, service, async_service_handler,
-            descriptions.get(service), schema=schema)
+            schema=schema)
 
     return True
 
@@ -495,14 +502,13 @@ class MediaPlayerDevice(Entity):
 
         return None
 
-    @asyncio.coroutine
-    def async_get_media_image(self):
+    async def async_get_media_image(self):
         """Fetch media image of current playing image."""
         url = self.media_image_url
         if url is None:
             return None, None
 
-        return (yield from _async_fetch_image(self.hass, url))
+        return await _async_fetch_image(self.hass, url)
 
     @property
     def media_title(self):
@@ -813,34 +819,31 @@ class MediaPlayerDevice(Entity):
             return self.async_turn_on()
         return self.async_turn_off()
 
-    @asyncio.coroutine
-    def async_volume_up(self):
+    async def async_volume_up(self):
         """Turn volume up for media player.
 
         This method is a coroutine.
         """
         if hasattr(self, 'volume_up'):
             # pylint: disable=no-member
-            yield from self.hass.async_add_job(self.volume_up)
+            await self.hass.async_add_job(self.volume_up)
             return
 
         if self.volume_level < 1:
-            yield from self.async_set_volume_level(
-                min(1, self.volume_level + .1))
+            await self.async_set_volume_level(min(1, self.volume_level + .1))
 
-    @asyncio.coroutine
-    def async_volume_down(self):
+    async def async_volume_down(self):
         """Turn volume down for media player.
 
         This method is a coroutine.
         """
         if hasattr(self, 'volume_down'):
             # pylint: disable=no-member
-            yield from self.hass.async_add_job(self.volume_down)
+            await self.hass.async_add_job(self.volume_down)
             return
 
         if self.volume_level > 0:
-            yield from self.async_set_volume_level(
+            await self.async_set_volume_level(
                 max(0, self.volume_level - .1))
 
     def async_media_play_pause(self):
@@ -883,15 +886,8 @@ class MediaPlayerDevice(Entity):
 
         return state_attr
 
-    def preload_media_image_url(self, url):
-        """Preload and cache a media image for future use."""
-        run_coroutine_threadsafe(
-            _async_fetch_image(self.hass, url), self.hass.loop
-        ).result()
 
-
-@asyncio.coroutine
-def _async_fetch_image(hass, url):
+async def _async_fetch_image(hass, url):
     """Fetch image.
 
     Images are cached in memory (the images are typically 10-100kB in size).
@@ -902,7 +898,7 @@ def _async_fetch_image(hass, url):
     if url not in cache_images:
         cache_images[url] = {CACHE_LOCK: asyncio.Lock(loop=hass.loop)}
 
-    with (yield from cache_images[url][CACHE_LOCK]):
+    async with cache_images[url][CACHE_LOCK]:
         if CACHE_CONTENT in cache_images[url]:
             return cache_images[url][CACHE_CONTENT]
 
@@ -910,10 +906,10 @@ def _async_fetch_image(hass, url):
         websession = async_get_clientsession(hass)
         try:
             with async_timeout.timeout(10, loop=hass.loop):
-                response = yield from websession.get(url)
+                response = await websession.get(url)
 
                 if response.status == 200:
-                    content = yield from response.read()
+                    content = await response.read()
                     content_type = response.headers.get(CONTENT_TYPE)
                     if content_type:
                         content_type = content_type.split(';')[0]
@@ -935,14 +931,13 @@ class MediaPlayerImageView(HomeAssistantView):
     url = '/api/media_player_proxy/{entity_id}'
     name = 'api:media_player:image'
 
-    def __init__(self, entities):
+    def __init__(self, component):
         """Initialize a media player view."""
-        self.entities = entities
+        self.component = component
 
-    @asyncio.coroutine
-    def get(self, request, entity_id):
+    async def get(self, request, entity_id):
         """Start a get request."""
-        player = self.entities.get(entity_id)
+        player = self.component.get_entity(entity_id)
         if player is None:
             status = 404 if request[KEY_AUTHENTICATED] else 401
             return web.Response(status=status)
@@ -953,7 +948,7 @@ class MediaPlayerImageView(HomeAssistantView):
         if not authenticated:
             return web.Response(status=401)
 
-        data, content_type = yield from player.async_get_media_image()
+        data, content_type = await player.async_get_media_image()
 
         if data is None:
             return web.Response(status=500)
@@ -961,3 +956,36 @@ class MediaPlayerImageView(HomeAssistantView):
         headers = {CACHE_CONTROL: 'max-age=3600'}
         return web.Response(
             body=data, content_type=content_type, headers=headers)
+
+
+@callback
+def websocket_handle_thumbnail(hass, connection, msg):
+    """Handle get media player cover command.
+
+    Async friendly.
+    """
+    component = hass.data[DOMAIN]
+    player = component.get_entity(msg['entity_id'])
+
+    if player is None:
+        connection.send_message_outside(websocket_api.error_message(
+            msg['id'], 'entity_not_found', 'Entity not found'))
+        return
+
+    async def send_image():
+        """Send image."""
+        data, content_type = await player.async_get_media_image()
+
+        if data is None:
+            connection.send_message_outside(websocket_api.error_message(
+                msg['id'], 'thumbnail_fetch_failed',
+                'Failed to fetch thumbnail'))
+            return
+
+        connection.send_message_outside(websocket_api.result_message(
+            msg['id'], {
+                'content_type': content_type,
+                'content': base64.b64encode(data).decode('utf-8')
+            }))
+
+    hass.async_add_job(send_image())

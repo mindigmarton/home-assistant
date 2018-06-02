@@ -4,31 +4,27 @@ Support for Todoist task management (https://todoist.com).
 For more details about this platform, please refer to the documentation at
 https://home-assistant.io/components/calendar.todoist/
 """
-
-
-from datetime import datetime
-from datetime import timedelta
+from datetime import datetime, timedelta
 import logging
-import os
 
 import voluptuous as vol
 
 from homeassistant.components.calendar import (
-    CalendarEventDevice, PLATFORM_SCHEMA)
-from homeassistant.components.google import (
-    CONF_DEVICE_ID)
-from homeassistant.config import load_yaml_config_file
-from homeassistant.const import (
-    CONF_ID, CONF_NAME, CONF_TOKEN)
+    DOMAIN, PLATFORM_SCHEMA, CalendarEventDevice)
+from homeassistant.components.google import CONF_DEVICE_ID
+from homeassistant.const import CONF_ID, CONF_NAME, CONF_TOKEN
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.template import DATE_STR_FORMAT
-from homeassistant.util import dt
-from homeassistant.util import Throttle
+from homeassistant.util import Throttle, dt
 
 REQUIREMENTS = ['todoist-python==7.0.17']
 
 _LOGGER = logging.getLogger(__name__)
-DOMAIN = 'todoist'
+
+CONF_EXTRA_PROJECTS = 'custom_projects'
+CONF_PROJECT_DUE_DATE = 'due_date_days'
+CONF_PROJECT_LABEL_WHITELIST = 'labels'
+CONF_PROJECT_WHITELIST = 'include_projects'
 
 # Calendar Platform: Does this calendar event last all day?
 ALL_DAY = 'all_day'
@@ -45,6 +41,14 @@ CONTENT = 'content'
 DESCRIPTION = 'description'
 # Calendar Platform: Used in the '_get_date()' method
 DATETIME = 'dateTime'
+# Service Call: When is this task due (in natural language)?
+DUE_DATE_STRING = 'due_date_string'
+# Service Call: The language of DUE_DATE_STRING
+DUE_DATE_LANG = 'due_date_lang'
+# Service Call: The available options of DUE_DATE_LANG
+DUE_DATE_VALID_LANGS = ['en', 'da', 'pl', 'zh', 'ko', 'de',
+                        'pt', 'ja', 'it', 'fr', 'sv', 'ru',
+                        'es', 'nl']
 # Attribute: When is this task due?
 # Service Call: When is this task due?
 DUE_DATE = 'due_date'
@@ -80,20 +84,19 @@ SUMMARY = 'summary'
 # Todoist API: Fetch all Tasks
 TASKS = 'items'
 
-SERVICE_NEW_TASK = 'new_task'
+SERVICE_NEW_TASK = 'todoist_new_task'
+
 NEW_TASK_SERVICE_SCHEMA = vol.Schema({
     vol.Required(CONTENT): cv.string,
     vol.Optional(PROJECT_NAME, default='inbox'): vol.All(cv.string, vol.Lower),
     vol.Optional(LABELS): cv.ensure_list_csv,
-    vol.Optional(PRIORITY): vol.All(vol.Coerce(int),
-                                    vol.Range(min=1, max=4)),
-    vol.Optional(DUE_DATE): cv.string
-})
+    vol.Optional(PRIORITY): vol.All(vol.Coerce(int), vol.Range(min=1, max=4)),
 
-CONF_EXTRA_PROJECTS = 'custom_projects'
-CONF_PROJECT_DUE_DATE = 'due_date_days'
-CONF_PROJECT_WHITELIST = 'include_projects'
-CONF_PROJECT_LABEL_WHITELIST = 'labels'
+    vol.Exclusive(DUE_DATE_STRING, 'due_date'): cv.string,
+    vol.Optional(DUE_DATE_LANG):
+        vol.All(cv.string, vol.In(DUE_DATE_VALID_LANGS)),
+    vol.Exclusive(DUE_DATE, 'due_date'): cv.string,
+})
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     vol.Required(CONF_TOKEN): cv.string,
@@ -114,8 +117,7 @@ MIN_TIME_BETWEEN_UPDATES = timedelta(minutes=15)
 
 
 def setup_platform(hass, config, add_devices, discovery_info=None):
-    """Setup the Todoist platform."""
-    # Check token:
+    """Set up the Todoist platform."""
     token = config.get(CONF_TOKEN)
 
     # Look up IDs based on (lowercase) names.
@@ -178,12 +180,8 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
 
     add_devices(project_devices)
 
-    # Services:
-    descriptions = load_yaml_config_file(
-        os.path.join(os.path.dirname(__file__), 'services.yaml'))
-
     def handle_new_task(call):
-        """Called when a user creates a new Todoist Task from HASS."""
+        """Call when a user creates a new Todoist Task from HASS."""
         project_name = call.data[PROJECT_NAME]
         project_id = project_id_lookup[project_name]
 
@@ -200,6 +198,12 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
         if PRIORITY in call.data:
             item.update(priority=call.data[PRIORITY])
 
+        if DUE_DATE_STRING in call.data:
+            item.update(date_string=call.data[DUE_DATE_STRING])
+
+        if DUE_DATE_LANG in call.data:
+            item.update(date_lang=call.data[DUE_DATE_LANG])
+
         if DUE_DATE in call.data:
             due_date = dt.parse_datetime(call.data[DUE_DATE])
             if due_date is None:
@@ -215,7 +219,6 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
         _LOGGER.debug("Created Todoist task: %s", call.data[CONTENT])
 
     hass.services.register(DOMAIN, SERVICE_NEW_TASK, handle_new_task,
-                           descriptions[DOMAIN][SERVICE_NEW_TASK],
                            schema=NEW_TASK_SERVICE_SCHEMA)
 
 
@@ -426,7 +429,7 @@ class TodoistProjectData(object):
 
         The "best" event is determined by the following criteria:
           * A proposed event must not be completed
-          * A proposed event must have a end date (otherwise we go with
+          * A proposed event must have an end date (otherwise we go with
             the event at index 0, selected above)
           * A proposed event must be on the same day or earlier as our
             current event
@@ -511,9 +514,13 @@ class TodoistProjectData(object):
             # We had no valid tasks
             return True
 
+        # Make sure the task collection is reset to prevent an
+        # infinite collection repeating the same tasks
+        self.all_project_tasks.clear()
+
         # Organize the best tasks (so users can see all the tasks
         # they have, organized)
-        while len(project_tasks) > 0:
+        while project_tasks:
             best_task = self.select_best_task(project_tasks)
             _LOGGER.debug("Found Todoist Task: %s", best_task[SUMMARY])
             project_tasks.remove(best_task)
@@ -536,8 +543,7 @@ class TodoistProjectData(object):
                 # Let's set our "due date" to tomorrow
                 self.event[END] = {
                     DATETIME: (
-                        datetime.utcnow() +
-                        timedelta(days=1)
+                        datetime.utcnow() + timedelta(days=1)
                     ).strftime(DATE_STR_FORMAT)
                 }
         _LOGGER.debug("Updated %s", self._name)

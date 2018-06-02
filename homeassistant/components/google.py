@@ -44,6 +44,7 @@ CONF_ENTITIES = 'entities'
 CONF_TRACK = 'track'
 CONF_SEARCH = 'search'
 CONF_OFFSET = 'offset'
+CONF_IGNORE_AVAILABILITY = 'ignore_availability'
 
 DEFAULT_CONF_TRACK_NEW = True
 DEFAULT_CONF_OFFSET = '!!'
@@ -74,8 +75,9 @@ _SINGLE_CALSEARCH_CONFIG = vol.Schema({
     vol.Required(CONF_NAME): cv.string,
     vol.Required(CONF_DEVICE_ID): cv.string,
     vol.Optional(CONF_TRACK): cv.boolean,
-    vol.Optional(CONF_SEARCH): vol.Any(cv.string, None),
+    vol.Optional(CONF_SEARCH): cv.string,
     vol.Optional(CONF_OFFSET): cv.string,
+    vol.Optional(CONF_IGNORE_AVAILABILITY, default=True): cv.boolean,
 })
 
 DEVICE_SCHEMA = vol.Schema({
@@ -128,7 +130,7 @@ def do_authentication(hass, config):
         """Keep trying to validate the user_code until it expires."""
         if now >= dt.as_local(dev_flow.user_code_expiry):
             hass.components.persistent_notification.create(
-                'Authenication code expired, please restart '
+                'Authentication code expired, please restart '
                 'Home-Assistant and try again',
                 title=NOTIFICATION_TITLE,
                 notification_id=NOTIFICATION_ID)
@@ -190,8 +192,7 @@ def setup_services(hass, track_new_found_calendars, calendar_service):
                                 hass.data[DATA_INDEX][calendar[CONF_CAL_ID]])
 
     hass.services.register(
-        DOMAIN, SERVICE_FOUND_CALENDARS, _found_calendar,
-        None, schema=None)
+        DOMAIN, SERVICE_FOUND_CALENDARS, _found_calendar)
 
     def _scan_for_calendars(service):
         """Scan for new calendars."""
@@ -204,9 +205,7 @@ def setup_services(hass, track_new_found_calendars, calendar_service):
                                calendar)
 
     hass.services.register(
-        DOMAIN, SERVICE_SCAN_CALENDARS,
-        _scan_for_calendars,
-        None, schema=None)
+        DOMAIN, SERVICE_SCAN_CALENDARS, _scan_for_calendars)
     return True
 
 

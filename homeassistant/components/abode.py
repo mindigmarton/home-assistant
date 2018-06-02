@@ -7,11 +7,10 @@ https://home-assistant.io/components/abode/
 import asyncio
 import logging
 from functools import partial
-from os import path
+from requests.exceptions import HTTPError, ConnectTimeout
 
 import voluptuous as vol
 
-from homeassistant.config import load_yaml_config_file
 from homeassistant.const import (
     ATTR_ATTRIBUTION, ATTR_DATE, ATTR_TIME, ATTR_ENTITY_ID, CONF_USERNAME,
     CONF_PASSWORD, CONF_EXCLUDE, CONF_NAME, CONF_LIGHTS,
@@ -19,9 +18,8 @@ from homeassistant.const import (
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import discovery
 from homeassistant.helpers.entity import Entity
-from requests.exceptions import HTTPError, ConnectTimeout
 
-REQUIREMENTS = ['abodepy==0.12.2']
+REQUIREMENTS = ['abodepy==0.13.1']
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,6 +27,7 @@ CONF_ATTRIBUTION = "Data provided by goabode.com"
 CONF_POLLING = 'polling'
 
 DOMAIN = 'abode'
+DEFAULT_CACHEDB = './abodepy_cache.pickle'
 
 NOTIFICATION_ID = 'abode_notification'
 NOTIFICATION_TITLE = 'Abode Security Setup'
@@ -82,19 +81,20 @@ TRIGGER_SCHEMA = vol.Schema({
 
 ABODE_PLATFORMS = [
     'alarm_control_panel', 'binary_sensor', 'lock', 'switch', 'cover',
-    'camera', 'light'
+    'camera', 'light', 'sensor'
 ]
 
 
 class AbodeSystem(object):
     """Abode System class."""
 
-    def __init__(self, username, password, name, polling, exclude, lights):
+    def __init__(self, username, password, cache,
+                 name, polling, exclude, lights):
         """Initialize the system."""
         import abodepy
         self.abode = abodepy.Abode(
             username, password, auto_login=True, get_devices=True,
-            get_automations=True)
+            get_automations=True, cache_path=cache)
         self.name = name
         self.polling = polling
         self.exclude = exclude
@@ -131,8 +131,9 @@ def setup(hass, config):
     lights = conf.get(CONF_LIGHTS)
 
     try:
+        cache = hass.config.path(DEFAULT_CACHEDB)
         hass.data[DOMAIN] = AbodeSystem(
-            username, password, name, polling, exclude, lights)
+            username, password, cache, name, polling, exclude, lights)
     except (AbodeException, ConnectTimeout, HTTPError) as ex:
         _LOGGER.error("Unable to connect to Abode: %s", str(ex))
 
@@ -188,22 +189,16 @@ def setup_hass_services(hass):
         for device in target_devices:
             device.trigger()
 
-    descriptions = load_yaml_config_file(
-        path.join(path.dirname(__file__), 'services.yaml'))[DOMAIN]
-
     hass.services.register(
         DOMAIN, SERVICE_SETTINGS, change_setting,
-        descriptions.get(SERVICE_SETTINGS),
         schema=CHANGE_SETTING_SCHEMA)
 
     hass.services.register(
         DOMAIN, SERVICE_CAPTURE_IMAGE, capture_image,
-        descriptions.get(SERVICE_CAPTURE_IMAGE),
         schema=CAPTURE_IMAGE_SCHEMA)
 
     hass.services.register(
         DOMAIN, SERVICE_TRIGGER, trigger_quick_action,
-        descriptions.get(SERVICE_TRIGGER),
         schema=TRIGGER_SCHEMA)
 
 

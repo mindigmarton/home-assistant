@@ -1,15 +1,14 @@
 """Google Assistant OAuth View."""
 
-import asyncio
 import logging
 
 # Typing imports
 # pylint: disable=using-constant-test,unused-import,ungrouped-imports
 # if False:
-from homeassistant.core import HomeAssistant  # NOQA
 from aiohttp.web import Request, Response  # NOQA
 from typing import Dict, Any  # NOQA
 
+from homeassistant.core import HomeAssistant  # NOQA
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.const import (
     HTTP_BAD_REQUEST,
@@ -44,8 +43,7 @@ class GoogleAssistantAuthView(HomeAssistantView):
         self.client_id = cfg.get(CONF_CLIENT_ID)
         self.access_token = cfg.get(CONF_ACCESS_TOKEN)
 
-    @asyncio.coroutine
-    def get(self, request: Request) -> Response:
+    async def get(self, request: Request) -> Response:
         """Handle oauth token request."""
         query = request.query
         redirect_uri = query.get('redirect_uri')
