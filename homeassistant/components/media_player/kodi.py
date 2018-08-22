@@ -160,6 +160,7 @@ def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
     if DATA_KODI not in hass.data:
         hass.data[DATA_KODI] = dict()
 
+    unique_id = None
     # Is this a manual configuration?
     if discovery_info is None:
         name = config.get(CONF_NAME)
@@ -175,12 +176,23 @@ def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
         tcp_port = DEFAULT_TCP_PORT
         encryption = DEFAULT_PROXY_SSL
         websocket = DEFAULT_ENABLE_WEBSOCKET
+        properties = discovery_info.get('properties')
+        if properties is not None:
+            unique_id = properties.get('uuid', None)
 
     # Only add a device once, so discovered devices do not override manual
     # config.
     ip_addr = socket.gethostbyname(host)
     if ip_addr in hass.data[DATA_KODI]:
         return
+
+    # If we got an unique id, check that it does not exist already.
+    # This is necessary as netdisco does not deterministally return the same
+    # advertisement when the service is offered over multiple IP addresses.
+    if unique_id is not None:
+        for device in hass.data[DATA_KODI].values():
+            if device.unique_id == unique_id:
+                return
 
     entity = KodiDevice(
         hass,
@@ -190,7 +202,8 @@ def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
         password=config.get(CONF_PASSWORD),
         turn_on_action=config.get(CONF_TURN_ON_ACTION),
         turn_off_action=config.get(CONF_TURN_OFF_ACTION),
-        timeout=config.get(CONF_TIMEOUT), websocket=websocket)
+        timeout=config.get(CONF_TIMEOUT), websocket=websocket,
+        unique_id=unique_id)
 
     hass.data[DATA_KODI][ip_addr] = entity
     async_add_devices([entity], update_before_add=True)
@@ -260,12 +273,14 @@ class KodiDevice(MediaPlayerDevice):
     def __init__(self, hass, name, host, port, tcp_port, encryption=False,
                  username=None, password=None,
                  turn_on_action=None, turn_off_action=None,
-                 timeout=DEFAULT_TIMEOUT, websocket=True):
+                 timeout=DEFAULT_TIMEOUT, websocket=True,
+                 unique_id=None):
         """Initialize the Kodi device."""
         import jsonrpc_async
         import jsonrpc_websocket
         self.hass = hass
         self._name = name
+        self._unique_id = unique_id
 
         kwargs = {
             'timeout': timeout,
@@ -294,6 +309,7 @@ class KodiDevice(MediaPlayerDevice):
             # Register notification listeners
             self._ws_server.Player.OnPause = self.async_on_speed_event
             self._ws_server.Player.OnPlay = self.async_on_speed_event
+            self._ws_server.Player.OnResume = self.async_on_speed_event
             self._ws_server.Player.OnSpeedChanged = self.async_on_speed_event
             self._ws_server.Player.OnStop = self.async_on_stop
             self._ws_server.Application.OnVolumeChanged = \
@@ -384,6 +400,11 @@ class KodiDevice(MediaPlayerDevice):
             return None
 
     @property
+    def unique_id(self):
+        """Return the unique id of the device."""
+        return self._unique_id
+
+    @property
     def state(self):
         """Return the state of the device."""
         if self._players is None:
@@ -392,7 +413,7 @@ class KodiDevice(MediaPlayerDevice):
         if not self._players:
             return STATE_IDLE
 
-        if self._properties['speed'] == 0 and not self._properties['live']:
+        if self._properties['speed'] == 0:
             return STATE_PAUSED
 
         return STATE_PLAYING
@@ -541,8 +562,8 @@ class KodiDevice(MediaPlayerDevice):
     def media_title(self):
         """Title of current playing media."""
         # find a string we can use as a title
-        return self._item.get(
-            'title', self._item.get('label', self._item.get('file')))
+        item = self._item
+        return item.get('title') or item.get('label') or item.get('file')
 
     @property
     def media_series_title(self):
@@ -748,7 +769,7 @@ class KodiDevice(MediaPlayerDevice):
         if media_type == "CHANNEL":
             return self.server.Player.Open(
                 {"item": {"channelid": int(media_id)}})
-        elif media_type == "PLAYLIST":
+        if media_type == "PLAYLIST":
             return self.server.Player.Open(
                 {"item": {"playlistid": int(media_id)}})
 
@@ -758,7 +779,7 @@ class KodiDevice(MediaPlayerDevice):
     @asyncio.coroutine
     def async_set_shuffle(self, shuffle):
         """Set shuffle mode, for the first player."""
-        if len(self._players) < 1:
+        if not self._players:
             raise RuntimeError("Error: No active player.")
         yield from self.server.Player.SetShuffle(
             {"playerid": self._players[0]['playerid'], "shuffle": shuffle})

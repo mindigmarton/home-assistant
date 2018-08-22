@@ -10,7 +10,7 @@ from homeassistant.helpers.entity import Entity
 
 DEPENDENCIES = ['hive']
 
-FRIENDLY_NAMES = {'Hub_OnlineStatus': 'Hub Status',
+FRIENDLY_NAMES = {'Hub_OnlineStatus': 'Hive Hub Status',
                   'Hive_OutsideTemperature': 'Outside Temperature'}
 DEVICETYPE_ICONS = {'Hub_OnlineStatus': 'mdi:switch',
                     'Hive_OutsideTemperature': 'mdi:thermometer'}
@@ -55,7 +55,7 @@ class HiveSensorEntity(Entity):
         """Return the state of the sensor."""
         if self.device_type == "Hub_OnlineStatus":
             return self.session.sensor.hub_online_status(self.node_id)
-        elif self.device_type == "Hive_OutsideTemperature":
+        if self.device_type == "Hive_OutsideTemperature":
             return self.session.weather.temperature()
 
     @property
