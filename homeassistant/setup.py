@@ -9,8 +9,9 @@ from typing import Optional, Dict, List
 from homeassistant import requirements, core, loader, config as conf_util
 from homeassistant.config import async_notify_setup_error
 from homeassistant.const import EVENT_COMPONENT_LOADED, PLATFORM_FORMAT
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, PlatformNotReady
 from homeassistant.util.async_ import run_coroutine_threadsafe
+from homeassistant.helpers.event import async_call_later
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -146,6 +147,16 @@ async def _async_setup_component(hass: core.HomeAssistant,
         else:
             result = await hass.async_add_executor_job(
                 component.setup, hass, processed_config)  # type: ignore
+    except PlatformNotReady:
+        wait_time = 30
+        _LOGGER.warning('Component %s not ready yet. Retrying in %d seconds.', domain, wait_time)
+
+        async def setup_again(now):
+            """Run setup again."""
+            await _async_setup_component(hass, domain, config)
+
+        async_call_later(hass, wait_time, setup_again)
+        return False
     except Exception:  # pylint: disable=broad-except
         _LOGGER.exception("Error during setup of component %s", domain)
         async_notify_setup_error(hass, domain, True)
