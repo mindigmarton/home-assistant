@@ -3,8 +3,11 @@ import datetime
 import unittest
 from unittest import mock
 
+import pytest
+
 import influxdb as influx_client
 
+from homeassistant.exceptions import PlatformNotReady
 from homeassistant.setup import setup_component
 import homeassistant.components.influxdb as influxdb
 from homeassistant.const import EVENT_STATE_CHANGED, STATE_OFF, STATE_ON, \
@@ -94,6 +97,7 @@ class TestInfluxDB(unittest.TestCase):
         mock_client.return_value.query.side_effect = \
             influx_client.exceptions.InfluxDBClientError('fake')
         assert not setup_component(self.hass, influxdb.DOMAIN, config)
+        self.assertRaises(PlatformNotReady)
 
     def _setup(self, **kwargs):
         """Set up the client."""

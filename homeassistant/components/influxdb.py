@@ -19,6 +19,7 @@ from homeassistant.const import (
     CONF_PASSWORD, CONF_PORT, CONF_SSL, CONF_USERNAME, CONF_VERIFY_SSL,
     EVENT_STATE_CHANGED, EVENT_HOMEASSISTANT_STOP, STATE_UNAVAILABLE,
     STATE_UNKNOWN)
+from homeassistant.exceptions import PlatformNotReady
 from homeassistant.helpers import state as state_helper
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.entity_values import EntityValues
@@ -143,7 +144,7 @@ def setup(hass, config):
                       "check your entries in the configuration file (host, "
                       "port, etc.) and verify that the database exists and is "
                       "READ/WRITE", exc)
-        return False
+        raise PlatformNotReady
 
     def event_to_json(event):
         """Add an event to the outgoing Influx list."""
